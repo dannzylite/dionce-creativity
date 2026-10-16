@@ -1,0 +1,9 @@
+{
+  "name": "Dionce Creativity",
+  "short_name": "Dionce",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fffaf7",
+  "theme_color": "#8b258f",
+  "description": "Your stories, your readers, your world."
+}
