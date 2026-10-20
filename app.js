@@ -21,7 +21,7 @@ const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
 const normProgress=p=>Object.fromEntries(Object.entries(p||{}).map(([k,v])=>[k,typeof v==='number'?{pct:v,ch:1,chId:null,at:0}:v]));
 const isDb=id=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id));
 
-let books=supabase?[]:[...localBooks],page='Home',selected=supabase?null:'crush',filter='All',query='',fontSize=19,readChapter=1,user=null,profile=null,recovering=false,replyTo=null,readerState=null,renderId=0,chapterCache={},editingNews=null;
+let books=supabase?[]:[...localBooks],page='Home',selected=supabase?null:'crush',filter='All',query='',fontSize=19,readChapter=1,user=null,profile=null,recovering=false,replyTo=null,readerState=null,renderId=0,chapterCache={},editingNews=null,returnTo=null;
 // Passage comments: the current chapter's comments, where their passages sit, the passage being commented on, and the passage the list is filtered to.
 let chapterComments=[],passageRanges=[],passageDraft=null,pendingPassage=null,focusIds=null;
 let saved=lsGet('dc_saved',supabase?[]:['crush']),progress=normProgress(lsGet('dc_progress',supabase?{}:{crush:38}));
@@ -81,16 +81,24 @@ function setProgress(b,entry,index,total){
  progress[b.id]=v;lsSet('dc_progress',progress);
  if(user&&isDb(b.id))supabase.from('reading_progress').upsert({user_id:user.id,book_id:b.id,chapter_id:v.chId,progress_percent:v.pct,updated_at:new Date(v.at).toISOString()}).then(({error})=>error&&console.warn('Progress not saved:',error.message));
 }
-// Published chapter list for readers (number + title). Demo books get generated entries.
+// Published chapter list for readers (number, title, is_free). Demo books get generated entries.
+// chapter_index lists every published chapter, even ones a signed-out reader can't open yet.
 async function getChapters(b){
  if(chapterCache[b.id])return chapterCache[b.id];
  let list;
- if(supabase&&isDb(b.id)){const {data,error}=await supabase.from('chapters').select('id,chapter_number,title').eq('book_id',b.id).eq('is_published',true).order('chapter_number');if(error)toast(error.message);list=data||[]}
+ if(supabase&&isDb(b.id)){
+  let {data,error}=await supabase.from('chapter_index').select('id,chapter_number,title,is_free').eq('book_id',b.id).order('chapter_number');
+  // Before 004_signin_to_read.sql has run there is no chapter_index view.
+  if(error)({data,error}=await supabase.from('chapters').select('id,chapter_number,title').eq('book_id',b.id).eq('is_published',true).order('chapter_number'));
+  if(error)toast(error.message);list=data||[];
+ }
  else list=Array.from({length:Number(b.chapters_count)||1},(_,i)=>({id:`demo-${b.id}-${i+1}`,chapter_number:i+1,title:`Chapter ${i+1}`}));
  return chapterCache[b.id]=list;
 }
+// Chapters past the free ones need a signed-in reader (the database enforces this too).
+const isLocked=c=>!!supabase&&!user&&c.is_free===false;
 async function getChapterBody(b,entry){
- if(supabase&&isDb(entry.id)){const {data}=await supabase.from('chapters').select('title,body').eq('id',entry.id).maybeSingle();if(data)return data}
+ if(supabase&&isDb(entry.id)){const {data}=await supabase.from('chapters').select('title,body').eq('id',entry.id).maybeSingle();return data||{title:entry.title,body:''}}
  return {title:entry.title,body:`${b.sample||b.description||'Every story begins somewhere.'}\n\nShe took a breath, trying to make sense of the thoughts tumbling through her mind. The truth had a way of arriving at the worst possible moment, and this was no exception.\n\nMaybe the hardest part was not knowing what would happen next. It was knowing that whatever happened, nothing would ever be quite the same again.\n\nOutside, the world carried on as if nothing had changed. Inside, a new chapter had already begun.`};
 }
 const chapterLabel=(n,title)=>!title||title===`Chapter ${n}`?`Chapter ${n}`:`Chapter ${n}: ${esc(title)}`;
@@ -189,7 +197,7 @@ function library(){let list=books.filter(b=>(filter==='All'||filter==='Saved'&&s
 async function detail(){
  let b=findBook(selected);if(!b)return library();
  const list=await getChapters(b),p=progress[b.id];
- const rows=list.map(c=>`<button class="row" data-read="${esc(b.id)}" data-chapter="${c.chapter_number}" style="width:100%;border:0;background:white;text-align:left"><span class="meta">${String(c.chapter_number).padStart(2,'0')}</span><span class="grow"><b style="font-size:13px">${chapterLabel(c.chapter_number,c.title)}</b>${p?.ch===c.chapter_number?'<div class="meta">You are here</div>':''}</span><span style="color:var(--purple)">→</span></button>`).join('')||'<div class="meta">The first chapter is on its way.</div>';
+ const rows=list.map(c=>`<button class="row" data-read="${esc(b.id)}" data-chapter="${c.chapter_number}" style="width:100%;border:0;background:white;text-align:left"><span class="meta">${String(c.chapter_number).padStart(2,'0')}</span><span class="grow"><b style="font-size:13px">${chapterLabel(c.chapter_number,c.title)}</b>${isLocked(c)?'<div class="meta">🔒 Sign in to read</div>':p?.ch===c.chapter_number?'<div class="meta">You are here</div>':''}</span><span style="color:var(--purple)">→</span></button>`).join('')||'<div class="meta">The first chapter is on its way.</div>';
  return `<button class="linkbtn" data-page="Library">← Back to library</button><div class="book-detail" style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:25px;margin-top:22px">${img(b)}<div><span class="badge">${esc(b.status)}</span><h1 class="title">${esc(b.title)}</h1><p class="meta">${esc(b.genre)} · ${list.length} chapters · By ${esc(authorName(b))}</p><p class="sub">${esc(b.description||'An original story from Dionce Creativity.')}</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin:16px 0">${list.length?`<button class="btn" data-read="${esc(b.id)}" data-chapter="${p?.ch||list[0].chapter_number}">${p?`Continue chapter ${p.ch} →`:'Start reading →'}</button>`:''}<button class="btn secondary" id="save-book">${saved.includes(String(b.id))?'✓ In your library':'＋ Add to library'}</button></div></div></div><div class="sectionhead"><h2>Chapters</h2><span class="meta">${list.length} chapters</span></div><div class="panel">${rows}</div>`;
 }
 async function reader(){
@@ -198,6 +206,11 @@ async function reader(){
  if(!list.length){page='Detail';return detail()}
  let index=list.findIndex(c=>c.chapter_number===readChapter);if(index<0)index=0;
  const entry=list[index];readChapter=entry.chapter_number;
+ if(isLocked(entry)){
+  readerState={book:b,list,index,entry,body:''};
+  const free=list.filter(c=>c.is_free).length;
+  return `<button class="linkbtn" data-page="Detail">← Back to story</button><div style="text-align:center;margin:20px 0 24px"><div class="eyebrow">${esc(b.title)}</div><h1 class="title">${chapterLabel(entry.chapter_number,entry.title)}</h1></div><div class="paper" style="text-align:center;max-width:560px;margin:auto"><div style="font-size:38px">🔒</div><h2 style="font-family:Georgia,serif;margin:8px 0">Sign in to keep reading</h2><p class="sub">The first ${free} chapter${free===1?' is':'s are'} free. Create a free account or sign in to continue <i>${esc(b.title)}</i>. It takes less than a minute.</p><button class="btn" id="signin-to-read">Sign in or create an account</button><div style="margin-top:18px"><button class="btn secondary small" id="prev-chapter" ${index===0?'disabled':''}>← Previous chapter</button></div></div>`;
+ }
  setProgress(b,entry,index,list.length);
  const chapter=await getChapterBody(b,entry);
  const text=String(chapter.body||'').replace(/\r\n?/g,'\n');
@@ -221,15 +234,17 @@ async function updates(){
  const owner=isAdmin();
  let newsQuery=supabase.from('announcements').select('id,title,body,published_at,created_at');
  if(!owner)newsQuery=newsQuery.not('published_at','is',null);
- const [{data:news},{data:chapters}]=await Promise.all([
+ let [{data:news},{data:chapters,error:chapterError}]=await Promise.all([
   newsQuery.order('created_at',{ascending:false}).limit(30),
-  supabase.from('chapters').select('chapter_number,title,published_at,book_id,books(title)').eq('is_published',true).order('published_at',{ascending:false}).limit(15)
+  supabase.from('chapter_index').select('chapter_number,title,published_at,book_id').order('published_at',{ascending:false}).limit(15)
  ]);
+ // Before 004_signin_to_read.sql has run there is no chapter_index view.
+ if(chapterError)({data:chapters}=await supabase.from('chapters').select('chapter_number,title,published_at,book_id').eq('is_published',true).order('published_at',{ascending:false}).limit(15));
  const newsItem=a=>editingNews===a.id
   ?`<div style="padding:13px 0;border-bottom:1px solid var(--line)"><label class="fieldlabel">Title</label><input id="edit-news-title" class="field" maxlength="140" value="${esc(a.title)}"><label class="fieldlabel">Message</label><textarea id="edit-news-body" class="field" rows="4">${esc(a.body)}</textarea><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" data-save-news="${a.id}">Save changes</button><button class="btn secondary small" id="cancel-edit-news">Cancel</button></div></div>`
   :`<div class="row" style="align-items:flex-start"><span style="font-size:20px">📣</span><div class="grow"><b>${esc(a.title)}</b> <span class="meta">${a.published_at?ago(a.published_at):'Draft · only you can see this'}</span><div style="font-size:13px;line-height:1.6;white-space:pre-wrap;margin-top:4px">${esc(a.body)}</div>${owner?`<div style="display:flex;gap:14px;margin-top:6px"><button class="linkbtn" data-edit-news="${a.id}">Edit</button><button class="linkbtn" data-toggle-news="${a.id}" data-published="${!!a.published_at}">${a.published_at?'Unpublish':'Publish'}</button><button class="linkbtn" data-confirm data-delete-news="${a.id}">Delete</button></div>`:''}</div></div>`;
  const items=[...(news||[]).map(a=>({at:a.published_at||a.created_at,html:newsItem(a)})),
-  ...(chapters||[]).filter(c=>c.books&&findBook(c.book_id)).map(c=>({at:c.published_at,html:`<button class="row" data-read="${c.book_id}" data-chapter="${c.chapter_number}" style="width:100%;border:0;border-bottom:1px solid var(--line);background:white;text-align:left"><span style="font-size:20px">📖</span><span class="grow"><b>New: ${chapterLabel(c.chapter_number,c.title)}</b><div class="meta">${esc(c.books.title)} · ${ago(c.published_at)}</div></span><span style="color:var(--purple)">→</span></button>`}))
+  ...(chapters||[]).filter(c=>findBook(c.book_id)).map(c=>({at:c.published_at,html:`<button class="row" data-read="${c.book_id}" data-chapter="${c.chapter_number}" style="width:100%;border:0;border-bottom:1px solid var(--line);background:white;text-align:left"><span style="font-size:20px">📖</span><span class="grow"><b>New: ${chapterLabel(c.chapter_number,c.title)}</b><div class="meta">${esc(findBook(c.book_id).title)} · ${ago(c.published_at)}</div></span><span style="color:var(--purple)">→</span></button>`}))
  ].sort((a,b)=>new Date(b.at)-new Date(a.at));
  const composer=owner?`<div class="panel" style="margin-bottom:18px"><h3 style="font-family:Georgia,serif;margin-top:0">Post an update</h3><label class="fieldlabel">Title</label><input id="news-title" class="field" maxlength="140" placeholder="New book coming soon!"><label class="fieldlabel">Message</label><textarea id="news-body" class="field" rows="3" placeholder="Share news with your readers"></textarea><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="news-publish">Publish now</button><button class="btn secondary" id="news-draft">Save as draft</button></div></div>`:'';
  return `${intro}${composer}<div class="panel">${items.map(i=>i.html).join('')||'<div class="meta">Nothing new yet. Check back soon!</div>'}</div>`;
@@ -239,7 +254,7 @@ async function profilePage(){
  if(recovering)return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Choose a new password</h2><div class="fieldlabel">New password</div><input class="field" id="new-password" type="password" autocomplete="new-password" placeholder="At least 8 characters"><button class="btn" id="update-password">Save new password</button></div>`;
  const shelf=`<div class="sectionhead"><h2>Your shelf</h2></div><div class="grid">${books.filter(b=>saved.includes(String(b.id))).map(card).join('')||'<div class="meta">No saved stories yet.</div>'}</div>`;
  if(user)return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Your reader account</h2><p class="meta">${esc(user.email)}${isAdmin()?' · Site owner':''}</p><div class="fieldlabel">Display name (shown on your comments)</div><input class="field" id="display-name" maxlength="60" value="${esc(profile?.display_name||'')}"><div style="display:flex;gap:9px;flex-wrap:wrap"><button class="btn" id="save-profile">Save</button>${isAdmin()?'<button class="btn secondary" data-page="Admin">Author dashboard</button>':''}<button class="btn secondary" id="signout">Sign out</button></div></div>${shelf}`;
- return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Welcome, reader</h2><p class="sub">Create an account to save your reading progress across devices and join discussions.</p>${supabaseReady?'':'<div class="notice">Accounts are not active yet. Add the Supabase project settings to config.js and run the setup SQL.</div>'}<div class="fieldlabel">Email</div><input class="field" id="auth-email" type="email" autocomplete="email" placeholder="you@example.com"><div class="fieldlabel">Password</div><input class="field" id="auth-password" type="password" autocomplete="current-password" placeholder="At least 8 characters"><div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center"><button class="btn" id="signup">Create account</button><button class="btn secondary" id="signin">Sign in</button><button class="linkbtn" id="forgot-password">Forgot password?</button></div></div>${shelf}`;
+ return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Welcome, reader</h2>${returnTo?`<div class="notice">Sign in or create a free account to keep reading <b>${esc(findBook(returnTo.book)?.title||'your story')}</b>.</div>`:''}<p class="sub">Create an account to read every chapter, save your reading progress across devices, and join discussions.</p>${supabaseReady?'':'<div class="notice">Accounts are not active yet. Add the Supabase project settings to config.js and run the setup SQL.</div>'}<div class="fieldlabel">Email</div><input class="field" id="auth-email" type="email" autocomplete="email" placeholder="you@example.com"><div class="fieldlabel">Password</div><input class="field" id="auth-password" type="password" autocomplete="current-password" placeholder="At least 8 characters"><div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center"><button class="btn" id="signup">Create account</button><button class="btn secondary" id="signin">Sign in</button><button class="linkbtn" id="forgot-password">Forgot password?</button></div></div>${shelf}`;
 }
 const adminCtx=()=>({supabase,user,toast,$,esc,head,refresh:async reload=>{if(reload)await loadBooks();await render()}});
 async function admin(){
@@ -268,7 +283,7 @@ document.addEventListener('click',async e=>{
  const t=e.target.closest('button');if(!t||t.disabled)return;const d=t.dataset;
  // Two-tap confirmation for destructive buttons (the viewer can't rely on confirm()).
  if(t.hasAttribute('data-confirm')&&d.armed!=='1'){d.armed='1';d.label=t.textContent;t.textContent='Tap again to confirm';setTimeout(()=>{if(t.isConnected&&d.armed==='1'){d.armed='';t.textContent=d.label}},4000);return}
- if(d.page){if(d.page==='Admin')resetAdminView();await go(d.page);return}
+ if(d.page){if(d.page==='Admin')resetAdminView();if(d.page!=='Profile')returnTo=null;await go(d.page);return}
  if(d.open){selected=d.open;await go('Detail');return}
  if(d.filter){filter=d.filter;render();return}
  if(d.read){selected=d.read;readChapter=Number(d.chapter||1);await go('Reader');return}
@@ -303,7 +318,11 @@ document.addEventListener('click',async e=>{
   const {error}=await supabase.from('announcements').insert({title,body,author_id:user.id,published_at:t.id==='news-publish'?new Date().toISOString():null});
   t.disabled=false;if(error){toast(error.message);break}
   toast(t.id==='news-publish'?'Update published.':'Update saved as a draft.');render();break}
- case'signup':case'signin':{if(!supabase){toast('Connect Supabase first — see SETUP.md.');break}let email=$('auth-email').value.trim(),password=$('auth-password').value;if(!email||password.length<8){toast('Enter a valid email and a password of at least 8 characters.');break}t.disabled=true;let result=t.id==='signup'?await supabase.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}}):await supabase.auth.signInWithPassword({email,password});t.disabled=false;if(result.error){toast(result.error.message);break}await loadUser();toast(t.id==='signup'&&!result.data.session?'Account created. Check your email to confirm it, then sign in.':'You are signed in.');render();break}
+ case'signup':case'signin':{if(!supabase){toast('Connect Supabase first — see SETUP.md.');break}let email=$('auth-email').value.trim(),password=$('auth-password').value;if(!email||password.length<8){toast('Enter a valid email and a password of at least 8 characters.');break}t.disabled=true;let result=t.id==='signup'?await supabase.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}}):await supabase.auth.signInWithPassword({email,password});t.disabled=false;if(result.error){toast(result.error.message);break}await loadUser();toast(t.id==='signup'&&!result.data.session?'Account created. Check your email to confirm it, then sign in.':'You are signed in.');
+  // Signed in from the "keep reading" screen: take them straight back to that chapter.
+  if(user&&returnTo){selected=returnTo.book;readChapter=returnTo.chapter;returnTo=null;await go('Reader');break}
+  render();break}
+ case'signin-to-read':returnTo={book:selected,chapter:readChapter};await go('Profile');break;
  case'forgot-password':{if(!supabase){toast('Connect Supabase first — see SETUP.md.');break}const email=$('auth-email').value.trim();if(!email){toast('Enter your email above first.');break}const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});toast(error?error.message:'If that email has an account, a reset link is on its way.');break}
  case'update-password':{const password=$('new-password').value;if(password.length<8){toast('Use at least 8 characters.');break}const {error}=await supabase.auth.updateUser({password});if(error){toast(error.message);break}recovering=false;toast('Password updated.');render();break}
  case'save-profile':{const display_name=$('display-name').value.trim();if(!display_name){toast('Display name cannot be empty.');break}const {error}=await supabase.from('profiles').update({display_name}).eq('id',user.id);if(error){toast(error.message);break}profile={...profile,display_name};toast('Profile saved.');updateNav();break}
