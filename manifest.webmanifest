@@ -5,5 +5,17 @@
   "display": "standalone",
   "background_color": "#fffaf7",
   "theme_color": "#8b258f",
-  "description": "Your stories, your readers, your world."
+  "description": "Your stories, your readers, your world.",
+  "icons": [
+    {
+      "src": "assets/dc-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "assets/dc-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
 }

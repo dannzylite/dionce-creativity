@@ -17,7 +17,7 @@ Then visit `http://localhost:8000`.
 
 ## Connect the real backend (Supabase)
 1. Create a project at https://supabase.com.
-2. In the Supabase dashboard, open SQL Editor and run `supabase/schema.sql`, then run `supabase/002_mvp_features.sql` (adds discussions, cover storage, automatic chapter counts).
+2. In the Supabase dashboard, open SQL Editor and run `supabase/schema.sql`, then `supabase/002_mvp_features.sql` (discussions, cover storage, automatic chapter counts), then `supabase/003_passage_comments.sql` (highlight comments).
 3. In Authentication > URL Configuration, add your eventual site URL and your local preview URL to the allowed redirect URLs.
 4. Create an account from the app's Profile screen.
 5. In SQL Editor, promote your own account to admin, replacing the email:
@@ -32,9 +32,10 @@ Then visit `http://localhost:8000`.
 You can deploy this static starter to Netlify, Vercel, or Cloudflare Pages. Set the root directory to this folder and configure the production domain in Supabase Authentication URL Configuration. Add HTTPS before enabling web push notifications.
 
 ## Current scope / honest limitations
-- Author dashboard: create/edit/delete books, upload covers, write and publish chapters, reorder chapters, post announcements.
+- Author dashboard: create/edit/delete books, upload covers, write and publish chapters, reorder chapters. Updates/announcements are posted and edited on the Updates page when signed in as admin.
 - Readers: real chapter lists, comments with replies, community discussions, Updates feed (new chapters + announcements), saved books and reading progress synced to the account when signed in (browser-only when signed out).
 - Accounts: sign up, sign in, password reset, display name.
-- Not built yet: inline passage-anchored comments, push notifications, moderation beyond deleting, coins/payments.
+- Highlight comments: readers select text in a chapter and tap Comment; highlighted passages show in the text. To try it, run `supabase/seed_test_book.sql` (after making your account admin) to add a test book.
+- Not built yet: push notifications, moderation beyond deleting, coins/payments.
 - Demo books show only while Supabase is not configured.
 - Review policies and run end-to-end tests before opening registration to the public.
