@@ -51,15 +51,15 @@ async function loadBooks(){
 async function loadUser(){
  if(!supabase)return;
  const {data}=await supabase.auth.getUser();user=data?.user||null;profile=null;
- if(user){const {data:p}=await supabase.from('profiles').select('display_name,role').eq('id',user.id).maybeSingle();profile=p;await syncShelf()}
+ if(user){const {data:p}=await supabase.from('profiles').select('display_name,role').eq('id',user.id).maybeSingle();profile=p;await syncLibrary()}
 }
-// Merge this browser's shelf and progress into the account, then use the account's copy.
-async function syncShelf(){
+// Merge this browser's library and reading progress into the account, then use the account's copy.
+async function syncLibrary(){
  const [{data:s,error:e1},{data:p,error:e2}]=await Promise.all([
   supabase.from('library_saves').select('book_id').eq('user_id',user.id),
   supabase.from('reading_progress').select('book_id,chapter_id,progress_percent,updated_at,chapters(chapter_number)').eq('user_id',user.id)
  ]);
- if(e1||e2){console.warn('Could not sync shelf:',(e1||e2).message);return}
+ if(e1||e2){console.warn('Could not sync library:',(e1||e2).message);return}
  const serverSaved=new Set((s||[]).map(r=>r.book_id)),serverProgress={};
  for(const r of p||[])serverProgress[r.book_id]={pct:r.progress_percent,ch:r.chapters?.chapter_number||1,chId:r.chapter_id,at:new Date(r.updated_at).getTime()};
  const newSaves=saved.filter(id=>isDb(id)&&!serverSaved.has(id)).map(book_id=>({user_id:user.id,book_id}));
@@ -191,9 +191,20 @@ function home(){
  const b=recent&&findBook(recent[0]),p=recent?.[1];
  const art=books.length>1?books.slice(1,4):books.slice(0,3);
  const cont=b?`<div class="sectionhead"><h2>Pick up where you left off</h2><button class="linkbtn" data-page="Library">Your library →</button></div><section class="continue">${img(b)}<div style="align-self:center"><div class="eyebrow">CONTINUE READING</div><div class="bookname" style="font-size:21px">${esc(b.title)}</div><div class="meta">Chapter ${p.ch} · ${esc(b.genre)}</div><div class="progress"><span style="width:${p.pct}%"></span></div><div class="meta" style="margin-bottom:12px">${p.pct}% read</div><button class="btn" data-read="${esc(b.id)}" data-chapter="${p.ch}">Continue reading</button></div></section>`:'';
- return `<section class="hero"><div><div class="eyebrow">A LITTLE ESCAPE, JUST FOR YOU</div><h1>Every story leaves<br><em>a little magic.</em></h1><p>Step into stories of love, friendship, secrets, and the wonderfully messy business of being human.</p><button class="btn" data-page="Library">Explore the library →</button></div><div class="heroart">${art.map(b=>img(b)).join('')}</div></section>${cont}<div class="sectionhead"><h2>Stories to fall into</h2><button class="linkbtn" data-page="Library">View all →</button></div><div class="grid">${books.slice(0,5).map(card).join('')}</div><div class="sectionhead"><h2>From your shelf</h2></div><div class="grid">${books.filter(b=>saved.includes(String(b.id))).map(card).join('')||'<div class="empty" style="grid-column:1/-1">Save a story to keep it close.</div>'}</div>`;
+ return `<section class="hero"><div><div class="eyebrow">A LITTLE ESCAPE, JUST FOR YOU</div><h1>Every story leaves<br><em>a little magic.</em></h1><p>Step into stories of love, friendship, secrets, and the wonderfully messy business of being human.</p><button class="btn" id="explore-stories">Explore stories ↓</button></div><div class="heroart">${art.map(b=>img(b)).join('')}</div></section>${cont}<div class="sectionhead" id="all-stories"><h2>Stories to fall into</h2></div><div class="grid">${books.map(card).join('')}</div>`;
 }
-function library(){let list=books.filter(b=>(filter==='All'||filter==='Saved'&&saved.includes(String(b.id))||filter==='Romance'&&b.genre==='Romance'||filter==='Drama'&&b.genre==='Drama'||filter==='Completed'&&b.status==='completed'||filter==='Ongoing'&&b.status==='ongoing')&&b.title.toLowerCase().includes(query.toLowerCase()));return `${head('The Library','Your next favourite story might be one tap away.')}<div class="filters">${['All','Romance','Drama','Completed','Ongoing','Saved'].map(f=>`<button class="chip ${filter===f?'active':''}" data-filter="${f}">${f}</button>`).join('')}</div><div class="grid">${list.map(card).join('')||`<div class="empty" style="grid-column:1/-1">${books.length?'No stories match that search. Try another title or filter.':'No stories have been published yet.'}</div>`}</div>`}
+// The Library is the reader's own collection: only books they've added.
+function library(){
+ const mine=books.filter(b=>saved.includes(String(b.id)));
+ const list=mine.filter(b=>filter==='All'||filter==='Romance'&&b.genre==='Romance'||filter==='Drama'&&b.genre==='Drama'||filter==='Completed'&&b.status==='completed'||filter==='Ongoing'&&b.status==='ongoing');
+ const empty=mine.length?'No books in your library match that filter.':'Your library is empty. Open any story and tap <b>＋ Add to library</b> to keep it here.';
+ return `${head('Your Library','The stories you’ve added, all in one place.')}${mine.length?`<div class="filters">${['All','Romance','Drama','Completed','Ongoing'].map(f=>`<button class="chip ${filter===f?'active':''}" data-filter="${f}">${f}</button>`).join('')}</div>`:''}<div class="grid">${list.map(card).join('')||`<div class="empty" style="grid-column:1/-1">${empty}${mine.length?'':'<div style="margin-top:12px"><button class="btn small" data-page="Home">Find a story</button></div>'}</div>`}</div>`;
+}
+// Search covers every published story, not just the reader's library.
+function search(){
+ const q=query.trim().toLowerCase(),list=books.filter(b=>b.title.toLowerCase().includes(q));
+ return `${head('Search',`Results for “${esc(query.trim())}”`)}<div class="grid">${list.map(card).join('')||'<div class="empty" style="grid-column:1/-1">No stories match that search. Try another title.</div>'}</div>`;
+}
 async function detail(){
  let b=findBook(selected);if(!b)return library();
  const list=await getChapters(b),p=progress[b.id];
@@ -252,9 +263,8 @@ async function updates(){
 async function profilePage(){
  const intro=head('Your profile','Your own little corner of Dionce Creativity.');
  if(recovering)return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Choose a new password</h2><div class="fieldlabel">New password</div><input class="field" id="new-password" type="password" autocomplete="new-password" placeholder="At least 8 characters"><button class="btn" id="update-password">Save new password</button></div>`;
- const shelf=`<div class="sectionhead"><h2>Your shelf</h2></div><div class="grid">${books.filter(b=>saved.includes(String(b.id))).map(card).join('')||'<div class="meta">No saved stories yet.</div>'}</div>`;
- if(user)return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Your reader account</h2><p class="meta">${esc(user.email)}${isAdmin()?' · Site owner':''}</p><div class="fieldlabel">Display name (shown on your comments)</div><input class="field" id="display-name" maxlength="60" value="${esc(profile?.display_name||'')}"><div style="display:flex;gap:9px;flex-wrap:wrap"><button class="btn" id="save-profile">Save</button>${isAdmin()?'<button class="btn secondary" data-page="Admin">Author dashboard</button>':''}<button class="btn secondary" id="signout">Sign out</button></div></div>${shelf}`;
- return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Welcome, reader</h2>${returnTo?`<div class="notice">Sign in or create a free account to keep reading <b>${esc(findBook(returnTo.book)?.title||'your story')}</b>.</div>`:''}<p class="sub">Create an account to read every chapter, save your reading progress across devices, and join discussions.</p>${supabaseReady?'':'<div class="notice">Accounts are not active yet. Add the Supabase project settings to config.js and run the setup SQL.</div>'}<div class="fieldlabel">Email</div><input class="field" id="auth-email" type="email" autocomplete="email" placeholder="you@example.com"><div class="fieldlabel">Password</div><input class="field" id="auth-password" type="password" autocomplete="current-password" placeholder="At least 8 characters"><div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center"><button class="btn" id="signup">Create account</button><button class="btn secondary" id="signin">Sign in</button><button class="linkbtn" id="forgot-password">Forgot password?</button></div></div>${shelf}`;
+ if(user)return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Your reader account</h2><p class="meta">${esc(user.email)}${isAdmin()?' · Site owner':''}</p><div class="fieldlabel">Display name (shown on your comments)</div><input class="field" id="display-name" maxlength="60" value="${esc(profile?.display_name||'')}"><div style="display:flex;gap:9px;flex-wrap:wrap"><button class="btn" id="save-profile">Save</button>${isAdmin()?'<button class="btn secondary" data-page="Admin">Author dashboard</button>':''}</div></div>`;
+ return `${intro}<div class="panel"><h2 style="font-family:Georgia,serif;margin-top:0">Welcome, reader</h2>${returnTo?`<div class="notice">Sign in or create a free account to keep reading <b>${esc(findBook(returnTo.book)?.title||'your story')}</b>.</div>`:''}<p class="sub">Create an account to read every chapter, save your reading progress across devices, and join discussions.</p>${supabaseReady?'':'<div class="notice">Accounts are not active yet. Add the Supabase project settings to config.js and run the setup SQL.</div>'}<div class="fieldlabel">Email</div><input class="field" id="auth-email" type="email" autocomplete="email" placeholder="you@example.com"><div class="fieldlabel">Password</div><input class="field" id="auth-password" type="password" autocomplete="current-password" placeholder="At least 8 characters"><div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center"><button class="btn" id="signup">Create account</button><button class="btn secondary" id="signin">Sign in</button><button class="linkbtn" id="forgot-password">Forgot password?</button></div></div>`;
 }
 const adminCtx=()=>({supabase,user,toast,$,esc,head,refresh:async reload=>{if(reload)await loadBooks();await render()}});
 async function admin(){
@@ -266,17 +276,25 @@ async function admin(){
 async function render(){
  if(page==='Admin'&&!isAdmin())page='Home'; // e.g. after signing out while on the dashboard
  const id=++renderId;updateNav();
- const pages={Home:home,Library:library,Detail:detail,Reader:reader,Community:community,Updates:updates,Profile:profilePage,Admin:admin};
+ const pages={Home:home,Library:library,Search:search,Detail:detail,Reader:reader,Community:community,Updates:updates,Profile:profilePage,Admin:admin};
  const content=await (pages[page]||home)();
  if(id!==renderId)return; // a newer render started while this one was loading
  updateNav();$('main').innerHTML=content;$('hl-fab').classList.add('hide');
  if(page==='Reader')loadComments();
 }
-const go=async p=>{page=p;replyTo=null;editingNews=null;await render();window.scrollTo(0,0)};
+const go=async p=>{page=p;replyTo=null;editingNews=null;if(p!=='Search'){query='';$('search').value=''}await render();window.scrollTo(0,0)};
+// Account menu under the profile picture (signed-in only).
+function closeAccountMenu(){$('account-menu').classList.add('hide');$('avatar-btn').setAttribute('aria-expanded','false')}
+function toggleAccountMenu(){
+ const menu=$('account-menu');if(!menu.classList.contains('hide'))return closeAccountMenu();
+ menu.innerHTML=`<div class="who"><b>${esc(profile?.display_name||'Reader')}</b><br>${esc(user.email)}</div><button data-page="Profile" role="menuitem">My profile</button><button data-page="Library" role="menuitem">My library</button>${isAdmin()?'<button data-page="Admin" role="menuitem">Author dashboard</button>':''}<button id="signout" role="menuitem" style="color:#b3245f">Sign out</button>`;
+ menu.classList.remove('hide');$('avatar-btn').setAttribute('aria-expanded','true');
+}
 const narrow=()=>matchMedia('(max-width:720px)').matches;
 
 // ---------- Events ----------
 document.addEventListener('click',async e=>{
+ if(!e.target.closest('#avatar-btn'))closeAccountMenu();
  // Tapping a highlighted passage filters the comment list to that passage's comments.
  const mark=e.target.closest('#reader-paras mark.hl');
  if(mark&&getSelection().isCollapsed){const ids=mark.dataset.ids.split(',').filter(x=>x!=='draft');if(ids.length){focusIds=ids;renderComments();if(narrow())$('comments').scrollIntoView({behavior:'smooth',block:'start'})}return}
@@ -296,7 +314,9 @@ document.addEventListener('click',async e=>{
  if(d.deleteComment||d.deleteDiscussion){const table=d.deleteComment?'comments':'discussions';const {error}=await supabase.from(table).delete().eq('id',d.deleteComment||d.deleteDiscussion);toast(error?error.message:'Deleted.');if(d.deleteComment)loadComments();else render();return}
  if(page==='Admin'&&user&&isAdmin()&&await handleAdminClick(t,adminCtx()))return;
  switch(t.id){
- case'save-book':await toggleSave(selected);render();toast('Your shelf has been updated.');break;
+ case'save-book':await toggleSave(selected);render();toast(saved.includes(String(selected))?'Added to your library.':'Removed from your library.');break;
+ case'explore-stories':$('all-stories')?.scrollIntoView({behavior:'smooth',block:'start'});break;
+ case'avatar-btn':if(!user){await go('Profile');break}toggleAccountMenu();break;
  case'font-up':case'font-down':fontSize=t.id==='font-up'?Math.min(29,fontSize+2):Math.max(15,fontSize-2);if($('reader-text'))$('reader-text').style.fontSize=`${fontSize}px`;break;
  case'next-chapter':case'prev-chapter':{if(!readerState)break;const next=readerState.list[readerState.index+(t.id==='next-chapter'?1:-1)];if(next){readChapter=next.chapter_number;await go('Reader')}break}
  case'cancel-reply':{const kind=replyTo?.kind;replyTo=null;if(kind)$(`${kind}-reply-to`).hidden=true;break}
@@ -326,7 +346,7 @@ document.addEventListener('click',async e=>{
  case'forgot-password':{if(!supabase){toast('Connect Supabase first — see SETUP.md.');break}const email=$('auth-email').value.trim();if(!email){toast('Enter your email above first.');break}const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});toast(error?error.message:'If that email has an account, a reset link is on its way.');break}
  case'update-password':{const password=$('new-password').value;if(password.length<8){toast('Use at least 8 characters.');break}const {error}=await supabase.auth.updateUser({password});if(error){toast(error.message);break}recovering=false;toast('Password updated.');render();break}
  case'save-profile':{const display_name=$('display-name').value.trim();if(!display_name){toast('Display name cannot be empty.');break}const {error}=await supabase.from('profiles').update({display_name}).eq('id',user.id);if(error){toast(error.message);break}profile={...profile,display_name};toast('Profile saved.');updateNav();break}
- case'signout':await supabase?.auth.signOut();user=null;profile=null;saved=[];progress={};lsSet('dc_saved',saved);lsSet('dc_progress',progress);go('Profile');break;
+ case'signout':await supabase?.auth.signOut();user=null;profile=null;saved=[];progress={};lsSet('dc_saved',saved);lsSet('dc_progress',progress);toast('You are signed out.');go('Home');break;
  case'post-comment':case'post-discussion':{
   const kind=t.id==='post-comment'?'comment':'discussion',input=$(`${kind}-input`),text=input?.value.trim();
   if(!text){toast('Write something first.');break}
@@ -342,7 +362,8 @@ document.addEventListener('click',async e=>{
   break}
  }
 });
-$('search').addEventListener('input',e=>{query=e.target.value;if(page!=='Library'){page='Library';filter='All'}render()});
+$('search').addEventListener('input',e=>{query=e.target.value;page=query.trim()?'Search':'Home';render()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAccountMenu()});
 document.addEventListener('selectionchange',()=>{clearTimeout(window._selDebounce);window._selDebounce=setTimeout(onSelectionChange,120)});
 // Keep the text selected while the Comment button is pressed.
 $('hl-fab').addEventListener('mousedown',e=>e.preventDefault());
