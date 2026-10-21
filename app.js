@@ -33,7 +33,12 @@ const authorName=b=>b.author?.display_name||(isDb(b.id)?'Dionce Creativity':'Dio
 const findBook=id=>books.find(x=>String(x.id)===String(id));
 function toast(s){$('toast').textContent=s;$('toast').classList.remove('hide');clearTimeout(window._toast);window._toast=setTimeout(()=>$('toast').classList.add('hide'),3000)}
 function img(b,cls='cover'){let path=b.cover_url||b.cover_path||'assets/dc-logo.jpg';return `<img class="${cls}" src="${esc(path)}" alt="Cover of ${esc(b.title)}" loading="lazy" onerror="this.style.background='#ead9ef';this.alt='Cover unavailable'">`}
-function card(b){return `<button class="book" data-open="${esc(b.id)}">${img(b)}<div class="bookname">${esc(b.title)}</div><div class="meta">${esc(b.genre)} · ${b.chapters_count||0} chapters</div></button>`}
+// Reading stats: compact numbers (1.2K, 21.3M) with small line icons, as on Wattpad.
+const fmt=n=>new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(Number(n)||0);
+const svg=d=>`<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICON={reads:svg('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'),parts:svg('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),comments:svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>')};
+const stat=(kind,n,label,id='')=>`<span title="${fmt(n)} ${label}" aria-label="${Number(n)||0} ${label}"${id?` id="${id}"`:''}>${ICON[kind]}${fmt(n)}</span>`;
+function card(b){return `<button class="book" data-open="${esc(b.id)}">${img(b)}<div class="bookname">${esc(b.title)}</div><div class="meta">${esc(b.genre)} · ${b.chapters_count||0} chapters</div>${b.reads_count!==undefined?`<div class="stats" style="margin-top:3px">${stat('reads',b.reads_count,'reads')}</div>`:''}</button>`}
 function head(title,sub=''){return `<div class="eyebrow">DIONCE CREATIVITY</div><h1 class="title">${title}</h1>${sub?`<p class="sub">${sub}</p>`:''}`}
 function updateNav(){document.querySelectorAll('[data-page]').forEach(el=>el.classList.toggle('active',el.dataset.page===page));document.querySelector('.sidebar [data-page="Admin"]').classList.toggle('hide',!isAdmin());document.querySelector('.avatar').textContent=(profile?.display_name||user?.email||'D').trim().charAt(0).toUpperCase()}
 
@@ -41,7 +46,7 @@ function updateNav(){document.querySelectorAll('[data-page]').forEach(el=>el.cla
 async function loadBooks(){
  if(!supabase)return;
  const cols='id,title,slug,description,genre,status,cover_url,chapters_count,created_at';
- let {data,error}=await supabase.from('books').select(`${cols},author:profiles!books_author_profile_fk(display_name)`).eq('is_published',true).order('created_at',{ascending:false});
+ let {data,error}=await supabase.from('books').select(`${cols},reads_count,author:profiles!books_author_profile_fk(display_name)`).eq('is_published',true).order('created_at',{ascending:false});
  // Before 002_mvp_features.sql has run there is no author link; load the books without bylines.
  if(error)({data,error}=await supabase.from('books').select(cols).eq('is_published',true).order('created_at',{ascending:false}));
  if(error){console.warn('Could not load published books:',error.message);toast('Could not load stories right now.')}
@@ -87,7 +92,9 @@ async function getChapters(b){
  if(chapterCache[b.id])return chapterCache[b.id];
  let list;
  if(supabase&&isDb(b.id)){
-  let {data,error}=await supabase.from('chapter_index').select('id,chapter_number,title,is_free').eq('book_id',b.id).order('chapter_number');
+  let {data,error}=await supabase.from('chapter_index').select('id,chapter_number,title,is_free,reads_count,comments_count').eq('book_id',b.id).order('chapter_number');
+  // Before 005_reading_stats.sql has run the view has no counts.
+  if(error)({data,error}=await supabase.from('chapter_index').select('id,chapter_number,title,is_free').eq('book_id',b.id).order('chapter_number'));
   // Before 004_signin_to_read.sql has run there is no chapter_index view.
   if(error)({data,error}=await supabase.from('chapters').select('id,chapter_number,title').eq('book_id',b.id).eq('is_published',true).order('chapter_number'));
   if(error)toast(error.message);list=data||[];
@@ -121,6 +128,7 @@ async function loadComments(){
  if(!$('comment-list')||readerState?.entry.id!==chapterId)return; // the reader moved on while this loaded
  if(error){$('comment-list').innerHTML=`<div class="meta">${esc(error.message)}</div>`;return}
  chapterComments=data||[];passageRanges=locatePassages(readerState.body,chapterComments);
+ readerState.entry.comments_count=chapterComments.length;const sc=$('stat-comments');if(sc&&readerState.entry.reads_count!==undefined)sc.outerHTML=stat('comments',chapterComments.length,'comments','stat-comments');
  refreshHighlights();renderComments();
 }
 function renderComments(){
@@ -208,8 +216,8 @@ function search(){
 async function detail(){
  let b=findBook(selected);if(!b)return library();
  const list=await getChapters(b),p=progress[b.id];
- const rows=list.map(c=>`<button class="row" data-read="${esc(b.id)}" data-chapter="${c.chapter_number}" style="width:100%;border:0;background:white;text-align:left"><span class="meta">${String(c.chapter_number).padStart(2,'0')}</span><span class="grow"><b style="font-size:13px">${chapterLabel(c.chapter_number,c.title)}</b>${isLocked(c)?'<div class="meta">🔒 Sign in to read</div>':p?.ch===c.chapter_number?'<div class="meta">You are here</div>':''}</span><span style="color:var(--purple)">→</span></button>`).join('')||'<div class="meta">The first chapter is on its way.</div>';
- return `<button class="linkbtn" data-page="Library">← Back to library</button><div class="book-detail" style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:25px;margin-top:22px">${img(b)}<div><span class="badge">${esc(b.status)}</span><h1 class="title">${esc(b.title)}</h1><p class="meta">${esc(b.genre)} · ${list.length} chapters · By ${esc(authorName(b))}</p><p class="sub">${esc(b.description||'An original story from Dionce Creativity.')}</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin:16px 0">${list.length?`<button class="btn" data-read="${esc(b.id)}" data-chapter="${p?.ch||list[0].chapter_number}">${p?`Continue chapter ${p.ch} →`:'Start reading →'}</button>`:''}<button class="btn secondary" id="save-book">${saved.includes(String(b.id))?'✓ In your library':'＋ Add to library'}</button></div></div></div><div class="sectionhead"><h2>Chapters</h2><span class="meta">${list.length} chapters</span></div><div class="panel">${rows}</div>`;
+ const rows=list.map(c=>`<button class="row" data-read="${esc(b.id)}" data-chapter="${c.chapter_number}" style="width:100%;border:0;background:white;text-align:left"><span class="meta">${String(c.chapter_number).padStart(2,'0')}</span><span class="grow"><b style="font-size:13px">${chapterLabel(c.chapter_number,c.title)}</b>${isLocked(c)?'<div class="meta">🔒 Sign in to read</div>':p?.ch===c.chapter_number?'<div class="meta">You are here</div>':''}</span>${c.reads_count!==undefined?`<span class="stats">${stat('reads',c.reads_count,'reads')}</span>`:''}<span style="color:var(--purple)">→</span></button>`).join('')||'<div class="meta">The first chapter is on its way.</div>';
+ return `<button class="linkbtn" data-page="Library">← Back to library</button><div class="book-detail" style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:25px;margin-top:22px">${img(b)}<div><span class="badge">${esc(b.status)}</span><h1 class="title">${esc(b.title)}</h1><p class="meta">${esc(b.genre)} · By ${esc(authorName(b))}</p><div class="stats" style="font-size:13px;margin:4px 0 2px">${b.reads_count!==undefined?stat('reads',b.reads_count,'reads'):''}${stat('parts',list.length,'chapters')}</div><p class="sub">${esc(b.description||'An original story from Dionce Creativity.')}</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin:16px 0">${list.length?`<button class="btn" data-read="${esc(b.id)}" data-chapter="${p?.ch||list[0].chapter_number}">${p?`Continue chapter ${p.ch} →`:'Start reading →'}</button>`:''}<button class="btn secondary" id="save-book">${saved.includes(String(b.id))?'✓ In your library':'＋ Add to library'}</button></div></div></div><div class="sectionhead"><h2>Chapters</h2><span class="meta">${list.length} chapters</span></div><div class="panel">${rows}</div>`;
 }
 async function reader(){
  let b=findBook(selected);if(!b){page='Library';return library()}
@@ -228,7 +236,7 @@ async function reader(){
  readerState={book:b,list,index,entry,body:text};chapterComments=[];passageRanges=[];passageDraft=null;focusIds=null;
  const body=`<div id="reader-paras">${splitParagraphs(text).map(p=>paragraphHtml(p,[])).join('')}</div>`;
  const demo=!isDb(entry.id);
- return `<button class="linkbtn" data-page="Detail">← Back to story</button><div style="text-align:center;margin:20px 0 24px"><div class="eyebrow">${esc(b.title)}</div><h1 class="title">${chapterLabel(entry.chapter_number,chapter.title)}</h1><div class="meta">By ${esc(authorName(b))}</div></div><div style="display:flex;gap:8px;margin:14px 0 22px"><button class="chip" id="font-down">A−</button><button class="chip" id="font-up">A+</button></div><div class="readerlayout"><article class="paper"><div class="readertext" id="reader-text" style="font-size:${fontSize}px">${body}${demo?'<p style="font:11px system-ui;color:var(--muted)">This is sample text. Real chapters appear once they are published from the author dashboard.</p>':''}</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);padding-top:18px;margin-top:20px"><button class="btn secondary" id="prev-chapter" ${index===0?'disabled':''}>← Previous</button><span class="meta">${index+1} / ${list.length}</span><button class="btn" id="next-chapter" ${index===list.length-1?'disabled':''}>Next chapter →</button></div></article><aside class="panel" id="comments" style="min-width:0"><h3 style="font:22px Georgia,serif;margin-top:0">Reader reactions 💬</h3><p class="meta" style="margin-top:-6px">Tip: highlight any line in the chapter to comment on it.</p>${user?`${replyBar('comment')}<div id="passage-bar" class="meta" style="margin-bottom:6px" hidden>Commenting on <q style="font:italic 12px Georgia,serif;color:#6b4d72"></q> · <button class="linkbtn" id="cancel-passage">Cancel</button></div><textarea id="comment-input" class="field" rows="3" maxlength="3000" placeholder="Say what you're thinking…"></textarea><button class="btn small" id="post-comment" style="width:100%;margin-bottom:12px">Post comment</button>`:`<div class="notice">Sign in to read and post comments.</div><button class="btn small secondary" data-page="Profile" style="width:100%;margin-bottom:12px">Sign in</button>`}<div id="comment-list"><div class="meta">Loading comments…</div></div></aside></div>`;
+ return `<button class="linkbtn" data-page="Detail">← Back to story</button><div style="text-align:center;margin:20px 0 24px"><div class="eyebrow">${esc(b.title)}</div><h1 class="title">${chapterLabel(entry.chapter_number,chapter.title)}</h1><div class="meta">By ${esc(authorName(b))}</div>${entry.reads_count!==undefined?`<div class="stats" style="justify-content:center;margin-top:8px">${stat('reads',entry.reads_count,'reads','stat-reads')}${stat('comments',entry.comments_count,'comments','stat-comments')}</div>`:''}</div><div style="display:flex;gap:8px;margin:14px 0 22px"><button class="chip" id="font-down">A−</button><button class="chip" id="font-up">A+</button></div><div class="readerlayout"><article class="paper"><div class="readertext" id="reader-text" style="font-size:${fontSize}px">${body}${demo?'<p style="font:11px system-ui;color:var(--muted)">This is sample text. Real chapters appear once they are published from the author dashboard.</p>':''}</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);padding-top:18px;margin-top:20px"><button class="btn secondary" id="prev-chapter" ${index===0?'disabled':''}>← Previous</button><span class="meta">${index+1} / ${list.length}</span><button class="btn" id="next-chapter" ${index===list.length-1?'disabled':''}>Next chapter →</button></div></article><aside class="panel" id="comments" style="min-width:0"><h3 style="font:22px Georgia,serif;margin-top:0">Reader reactions 💬</h3><p class="meta" style="margin-top:-6px">Tip: highlight any line in the chapter to comment on it.</p>${user?`${replyBar('comment')}<div id="passage-bar" class="meta" style="margin-bottom:6px" hidden>Commenting on <q style="font:italic 12px Georgia,serif;color:#6b4d72"></q> · <button class="linkbtn" id="cancel-passage">Cancel</button></div><textarea id="comment-input" class="field" rows="3" maxlength="3000" placeholder="Say what you're thinking…"></textarea><button class="btn small" id="post-comment" style="width:100%;margin-bottom:12px">Post comment</button>`:`<div class="notice">Sign in to read and post comments.</div><button class="btn small secondary" data-page="Profile" style="width:100%;margin-bottom:12px">Sign in</button>`}<div id="comment-list"><div class="meta">Loading comments…</div></div></aside></div>`;
 }
 async function community(){
  const intro=head('The Community','A place for theories, favourite characters, and fictional-character interventions.');
@@ -280,7 +288,22 @@ async function render(){
  const content=await (pages[page]||home)();
  if(id!==renderId)return; // a newer render started while this one was loading
  updateNav();$('main').innerHTML=content;$('hl-fab').classList.add('hide');
- if(page==='Reader')loadComments();
+ if(page==='Reader'){loadComments();scheduleRead()}
+}
+// Anonymous browser id, so signed-out reads can be de-duplicated without an account.
+const visitorId=(()=>{let v=lsGet('dc_visitor',null);if(!isDb(v)){v=crypto.randomUUID();lsSet('dc_visitor',v)}return v})();
+let readTimer;
+function scheduleRead(){
+ clearTimeout(readTimer);
+ const entry=readerState?.entry;
+ if(!supabase||!entry||!isDb(entry.id)||isLocked(entry)||isAdmin())return;
+ readTimer=setTimeout(async()=>{
+  if(page!=='Reader'||readerState?.entry.id!==entry.id)return; // they moved on
+  const {data:counted,error}=await supabase.rpc('record_read',{p_chapter:entry.id,p_visitor:visitorId});
+  if(error){console.warn('Read not recorded:',error.message);return}
+  if(counted){entry.reads_count=(Number(entry.reads_count)||0)+1;const b=readerState.book;b.reads_count=(Number(b.reads_count)||0)+1;
+   const el=$('stat-reads');if(el&&readerState?.entry.id===entry.id)el.outerHTML=stat('reads',entry.reads_count,'reads','stat-reads')}
+ },5000);
 }
 const go=async p=>{page=p;replyTo=null;editingNews=null;if(p!=='Search'){query='';$('search').value=''}await render();window.scrollTo(0,0)};
 // Account menu under the profile picture (signed-in only).

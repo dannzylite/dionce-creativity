@@ -6,6 +6,7 @@
 let view='list',bookId=null,chapterId=null,slugTouched=false;
 const GENRES=['Romance','Drama','Fantasy','Thriller','Other'];
 const slugify=s=>String(s).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80);
+const fmtReads=n=>new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(Number(n)||0);
 const confirmBtn=(label,attrs)=>`<button class="btn secondary small" data-confirm ${attrs}>${label}</button>`;
 
 export function resetAdminView(){view='list';bookId=null;chapterId=null}
@@ -17,8 +18,8 @@ export async function renderAdmin(ctx){
 }
 
 async function listView({supabase,esc,head}){
- const {data:books,error}=await supabase.from('books').select('id,title,status,is_published,chapters_count,cover_url').order('created_at',{ascending:false});
- const rows=error?`<p class="meta">${esc(error.message)}</p>`:(books||[]).map(b=>`<div class="row"><img src="${esc(b.cover_url||'assets/dc-logo.jpg')}" alt="" style="width:42px;aspect-ratio:3/4;object-fit:cover;border-radius:6px"><div class="grow"><b>${esc(b.title)}</b><div class="meta">${esc(b.status)} · ${b.chapters_count} published chapters · ${b.is_published?'Visible to readers':'Draft (hidden)'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn secondary small" data-admin-book="${b.id}">Edit</button><button class="btn secondary small" data-admin-toggle-book="${b.id}" data-published="${b.is_published}">${b.is_published?'Unpublish':'Publish'}</button>${confirmBtn('Delete',`data-admin-delete-book="${b.id}"`)}</div></div>`).join('')||'<div class="empty">No books yet. Add your first one.</div>';
+ const {data:books,error}=await supabase.from('books').select('*').order('created_at',{ascending:false});
+ const rows=error?`<p class="meta">${esc(error.message)}</p>`:(books||[]).map(b=>`<div class="row"><img src="${esc(b.cover_url||'assets/dc-logo.jpg')}" alt="" style="width:42px;aspect-ratio:3/4;object-fit:cover;border-radius:6px"><div class="grow"><b>${esc(b.title)}</b><div class="meta">${esc(b.status)} · ${b.chapters_count} published chapters · ${fmtReads(b.reads_count)} reads · ${b.is_published?'Visible to readers':'Draft (hidden)'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn secondary small" data-admin-book="${b.id}">Edit</button><button class="btn secondary small" data-admin-toggle-book="${b.id}" data-published="${b.is_published}">${b.is_published?'Unpublish':'Publish'}</button>${confirmBtn('Delete',`data-admin-delete-book="${b.id}"`)}</div></div>`).join('')||'<div class="empty">No books yet. Add your first one.</div>';
  return `${head('Author dashboard','Your stories, your publishing schedule, your rules.')}<div class="sectionhead"><h2>Your books</h2><button class="btn small" data-admin-book="new">＋ New book</button></div><div class="panel">${rows}</div><p class="meta" style="margin-top:16px">Announcements now live on the <button class="linkbtn" data-page="Updates">Updates page</button>, where you can post, edit and publish them.</p>`;
 }
 

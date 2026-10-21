@@ -17,7 +17,7 @@ Then visit `http://localhost:8000`.
 
 ## Connect the real backend (Supabase)
 1. Create a project at https://supabase.com.
-2. In the Supabase dashboard, open SQL Editor and run `supabase/schema.sql`, then `supabase/002_mvp_features.sql` (discussions, cover storage, automatic chapter counts), then `supabase/003_passage_comments.sql` (highlight comments), then `supabase/004_signin_to_read.sql` (first 2 chapters free, the rest need sign-in; change the number in `free_chapter_count()`).
+2. In the Supabase dashboard, open SQL Editor and run `supabase/schema.sql`, then `supabase/002_mvp_features.sql` (discussions, cover storage, automatic chapter counts), then `supabase/003_passage_comments.sql` (highlight comments), then `supabase/004_signin_to_read.sql` (first 2 chapters free, the rest need sign-in; change the number in `free_chapter_count()`), then `supabase/005_reading_stats.sql` (read and comment counts).
 3. In Authentication > URL Configuration, add your eventual site URL and your local preview URL to the allowed redirect URLs.
 4. Create an account from the app's Profile screen.
 5. In SQL Editor, promote your own account to admin, replacing the email:
