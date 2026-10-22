@@ -18,9 +18,12 @@ export async function renderAdmin(ctx){
 }
 
 async function listView({supabase,esc,head}){
- const {data:books,error}=await supabase.from('books').select('*').order('created_at',{ascending:false});
+ const [{data:books,error},{data:users,error:usersError}]=await Promise.all([
+  supabase.from('books').select('*').order('created_at',{ascending:false}),
+  supabase.rpc('admin_list_users')
+ ]);
  const rows=error?`<p class="meta">${esc(error.message)}</p>`:(books||[]).map(b=>`<div class="row"><img src="${esc(b.cover_url||'assets/dc-logo.jpg')}" alt="" style="width:42px;aspect-ratio:3/4;object-fit:cover;border-radius:6px"><div class="grow"><b>${esc(b.title)}</b><div class="meta">${esc(b.status)} · ${b.chapters_count} published chapters · ${fmtReads(b.reads_count)} reads · ${b.is_published?'Visible to readers':'Draft (hidden)'}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn secondary small" data-admin-book="${b.id}">Edit</button><button class="btn secondary small" data-admin-toggle-book="${b.id}" data-published="${b.is_published}">${b.is_published?'Unpublish':'Publish'}</button>${confirmBtn('Delete',`data-admin-delete-book="${b.id}"`)}</div></div>`).join('')||'<div class="empty">No books yet. Add your first one.</div>';
- return `${head('Author dashboard','Your stories, your publishing schedule, your rules.')}<div class="sectionhead"><h2>Your books</h2><button class="btn small" data-admin-book="new">＋ New book</button></div><div class="panel">${rows}</div><p class="meta" style="margin-top:16px">Announcements now live on the <button class="linkbtn" data-page="Updates">Updates page</button>, where you can post, edit and publish them.</p>`;
+ return `${head('Author dashboard','Your stories, your publishing schedule, your rules.')}<div class="sectionhead"><h2>Your books</h2><button class="btn small" data-admin-book="new">＋ New book</button></div><div class="panel">${rows}</div><p class="meta" style="margin-top:16px">Announcements now live on the <button class="linkbtn" data-page="Updates">Updates page</button>, where you can post, edit and publish them.</p>${readersSection(users,usersError,esc)}`;
 }
 
 async function bookView({supabase,esc,head}){
@@ -47,9 +50,19 @@ async function chapterView({supabase,esc,head}){
 }
 
 // Live helpers for the forms: slug auto-fill, cover preview, word count.
+// Signed-up readers (names and emails), newest first. Only an admin can call admin_list_users().
+function readersSection(users,error,esc){
+ const date=d=>d?new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'—';
+ if(error)return `<div class="sectionhead"><h2>Readers</h2></div><div class="notice">${/admin_list_users/.test(error.message)?'Run <b>supabase/006_admin_reader_list.sql</b> in Supabase to see who has signed up.':esc(error.message)}</div>`;
+ const list=users||[];
+ const rows=list.map(u=>`<tr data-search="${esc(`${u.display_name||''} ${u.username||''} ${u.email||''}`.toLowerCase())}"><td><b>${esc(u.display_name||'—')}</b><div class="meta">@${esc(u.username||'—')}</div></td><td>${esc(u.email||'—')}</td><td>${date(u.joined_at)}</td><td>${date(u.last_sign_in_at)}</td><td>${u.role==='admin'?'<span class="badge">Owner</span> ':''}${u.email_confirmed?'':'<span class="badge" style="background:#fff5db;color:#73521a">Email not confirmed</span>'}</td></tr>`).join('');
+ return `<div class="sectionhead" style="flex-wrap:wrap"><h2>Readers <span class="meta" style="font-size:13px">${list.length} signed up</span></h2>${list.length?'<input id="reader-search" class="search" style="width:min(100%,260px)" placeholder="Search name or email" aria-label="Search readers">':''}</div><div class="panel" style="overflow-x:auto;padding:6px 10px">${list.length?`<table class="users"><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Last signed in</th><th></th></tr></thead><tbody>${rows}</tbody></table><div class="meta" id="reader-none" style="padding:12px" hidden>No readers match that search.</div>`:'<div class="meta" style="padding:12px">Nobody has signed up yet.</div>'}</div>`;
+}
+
 export function initAdmin(){
  document.addEventListener('input',e=>{
   if(e.target.id==='book-slug')slugTouched=true;
+  if(e.target.id==='reader-search'){const q=e.target.value.trim().toLowerCase();let shown=0;document.querySelectorAll('.users tbody tr').forEach(r=>{r.hidden=!r.dataset.search.includes(q);if(!r.hidden)shown++});const none=document.getElementById('reader-none');if(none)none.hidden=shown>0}
   if(e.target.id==='book-title'&&!slugTouched){const s=document.getElementById('book-slug');if(s)s.value=slugify(e.target.value)}
   if(e.target.id==='chapter-body'){const w=e.target.value.trim()?e.target.value.trim().split(/\s+/).length:0;const el=document.getElementById('word-count');if(el)el.textContent=`${w} words`}
  });
