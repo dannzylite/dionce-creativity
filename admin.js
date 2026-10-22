@@ -51,12 +51,25 @@ async function chapterView({supabase,esc,head}){
 
 // Live helpers for the forms: slug auto-fill, cover preview, word count.
 // Signed-up readers (names and emails), newest first. Only an admin can call admin_list_users().
+let readersCache=[];
 function readersSection(users,error,esc){
+ readersCache=error?[]:(users||[]);
  const date=d=>d?new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):'—';
  if(error)return `<div class="sectionhead"><h2>Readers</h2></div><div class="notice">${/admin_list_users/.test(error.message)?'Run <b>supabase/006_admin_reader_list.sql</b> in Supabase to see who has signed up.':esc(error.message)}</div>`;
  const list=users||[];
  const rows=list.map(u=>`<tr data-search="${esc(`${u.display_name||''} ${u.username||''} ${u.email||''}`.toLowerCase())}"><td><b>${esc(u.display_name||'—')}</b><div class="meta">@${esc(u.username||'—')}</div></td><td>${esc(u.email||'—')}</td><td>${date(u.joined_at)}</td><td>${date(u.last_sign_in_at)}</td><td>${u.role==='admin'?'<span class="badge">Owner</span> ':''}${u.email_confirmed?'':'<span class="badge" style="background:#fff5db;color:#73521a">Email not confirmed</span>'}</td></tr>`).join('');
- return `<div class="sectionhead" style="flex-wrap:wrap"><h2>Readers <span class="meta" style="font-size:13px">${list.length} signed up</span></h2>${list.length?'<input id="reader-search" class="search" style="width:min(100%,260px)" placeholder="Search name or email" aria-label="Search readers">':''}</div><div class="panel" style="overflow-x:auto;padding:6px 10px">${list.length?`<table class="users"><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Last signed in</th><th></th></tr></thead><tbody>${rows}</tbody></table><div class="meta" id="reader-none" style="padding:12px" hidden>No readers match that search.</div>`:'<div class="meta" style="padding:12px">Nobody has signed up yet.</div>'}</div>`;
+ return `<div class="sectionhead" style="flex-wrap:wrap"><h2>Readers <span class="meta" style="font-size:13px">${list.length} signed up</span></h2>${list.length?'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input id="reader-search" class="search" style="width:min(100%,260px)" placeholder="Search name or email" aria-label="Search readers"><button class="btn small" id="export-readers">⬇ Download emails</button></div>':''}</div><div class="panel" style="overflow-x:auto;padding:6px 10px">${list.length?`<table class="users"><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Last signed in</th><th></th></tr></thead><tbody>${rows}</tbody></table><div class="meta" id="reader-none" style="padding:12px" hidden>No readers match that search.</div>`:'<div class="meta" style="padding:12px">Nobody has signed up yet.</div>'}</div>`;
+}
+
+// Spreadsheet of readers' emails (opens in Excel / Google Sheets, imports into Mailchimp, Brevo, etc.).
+function downloadReadersCsv(users){
+ // Quote every cell; prefix cells starting with = + - @ so spreadsheet apps don't run them as formulas.
+ const cell=v=>{let t=String(v??'');if(/^[=+\-@\t\r]/.test(t))t="'"+t;return `"${t.replace(/"/g,'""')}"`};
+ const day=d=>d?new Date(d).toLocaleDateString('en-CA'):''; // YYYY-MM-DD in the viewer's time zone
+ const lines=[['email','name','username','joined','email_confirmed'],...users.filter(u=>u.email).map(u=>[u.email,u.display_name,u.username,day(u.joined_at),u.email_confirmed?'yes':'no'])];
+ const blob=new Blob(['\ufeff'+lines.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`dionce-readers-${day(new Date())}.csv`;
+ document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 
 export function initAdmin(){
@@ -106,6 +119,7 @@ export async function handleAdminClick(t,ctx){
     toast(bookId?'Book saved.':'Draft book created. Now add chapters.');bookId=id;view='book';await refresh(true);
    }catch(err){toast(err.message);t.disabled=false;t.textContent=bookId?'Save changes':'Create draft book'}
    return true}
+  case'export-readers':{if(!readersCache.length){toast('No readers to download yet.');return true}downloadReadersCsv(readersCache);toast(`Downloaded ${readersCache.filter(u=>u.email).length} email addresses.`);return true}
   case'add-chapter':{
    const {data:last}=await supabase.from('chapters').select('chapter_number').eq('book_id',bookId).order('chapter_number',{ascending:false}).limit(1).maybeSingle();
    const n=(last?.chapter_number||0)+1;
